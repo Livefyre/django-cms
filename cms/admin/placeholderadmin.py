@@ -18,7 +18,8 @@ from django.contrib.admin import ModelAdmin
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render_to_response, get_object_or_404
 from django.template import RequestContext
-from django.template.defaultfilters import force_escape, escapejs
+from django.template.defaultfilters import escapejs
+from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext as _
 from django.conf import settings
 from django.views.decorators.http import require_POST
@@ -368,8 +369,8 @@ class PlaceholderAdminMixin(object):
                 'is_popup': True,
                 "type": cms_plugin.get_plugin_name(),
                 'plugin_id': plugin_id,
-                'icon': force_escape(escapejs(cms_plugin.get_instance_icon_src())),
-                'alt': force_escape(escapejs(cms_plugin.get_instance_icon_alt())),
+                'icon': mark_safe(escapejs(cms_plugin.get_instance_icon_src())),
+                'alt': mark_safe(escapejs(cms_plugin.get_instance_icon_alt())),
                 'cancel': True,
             }
             instance = cms_plugin.get_plugin_instance()[0]
@@ -403,8 +404,8 @@ class PlaceholderAdminMixin(object):
                 'name': force_unicode(saved_object),
                 "type": saved_object.get_plugin_name(),
                 'plugin_id': plugin_id,
-                'icon': force_escape(saved_object.get_instance_icon_src()),
-                'alt': force_escape(saved_object.get_instance_icon_alt()),
+                'icon': mark_safe(saved_object.get_instance_icon_src()),
+                'alt': mark_safe(saved_object.get_instance_icon_alt()),
             }
             return render_to_response('admin/cms/page/plugin/confirm_form.html', context, RequestContext(request))
         return response
