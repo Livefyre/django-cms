@@ -244,21 +244,6 @@ $(document).ready(function () {
 
 		},
 
-	    // For passing in to jsTree's settings.ui.theme_path in order to enable
-	    // it to construct a proper relative URL for its assets. If theme_path
-	    // remains false, jsTree will construct a path using the contents of the
-	    // location bar. In the case that static files (including jsTree's
-	    // javascript) are served from a location other than that of the HTML
-	    // files, the URLs constructed will be incorrect.
-	    function script_url_path() {
-	        // Find the URL that loaded this script (not sure if we can
-	        // programatically determine the name of the current script, so it is
-	        // hardcoded here)
-	        full_url = $('script[src*="/cms.changelist.js"]').attr('src');
-	        // Return everything but the filename
-	        return full_url.slice(0,full_url.lastIndexOf('/'));
-	    }
-
 		setupTree: function () {
 			var that = this;
 
