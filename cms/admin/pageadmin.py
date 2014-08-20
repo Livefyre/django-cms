@@ -1038,9 +1038,23 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
         if page:
             if not page.has_publish_permission(request):
                 return HttpResponseForbidden(force_unicode(_("You do not have permission to publish this page")))
-            published = page.publish(language)
-            if not published:
-                all_published = False
+            
+            try:
+                prepublished_page = None
+                if page.is_published('en'):
+                    prepublished_page = [ [ y.render_plugin() for y in x.get_plugins() ] for x in page.get_public_object().placeholders.all().order_by('slot') ]
+                published = page.publish(language)
+    
+                if not published:
+                    all_published = False
+                else:
+                    self.send_email_notification(page, True, prepublished_page)
+            except:
+                published = page.publish(language)
+    
+                if not published:
+                    all_published = False
+                
         statics = request.GET.get('statics', '')
         if not statics and not page:
             return Http404("No page or stack found for publishing.")
@@ -1148,6 +1162,11 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
                 action_flag=CHANGE,
                 change_message=message,
             )
+            
+            try:
+                self.send_email_notification(page, False)
+            except:
+                pass
         except RuntimeError:
             exc = sys.exc_info()[1]
             messages.error(request, exc.message)
@@ -1158,6 +1177,45 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
         if request.GET.get('redirect_language'):
             path = "%s?language=%s&page_id=%s" % (path, request.GET.get('redirect_language'), request.GET.get('redirect_page_id'))
         return HttpResponseRedirect(path)
+    
+    def strip_spaces(self, line):
+        line = line.replace('\n','')
+        line = line.replace('\t','')
+        line = line.replace('\r','')
+        return line
+        
+    
+    def send_email_notification(self, page, is_publish, previous=None):
+        if settings.PUBLISH_NOTIFICATIONS:
+            from django.contrib.auth.models import Group
+            from django.core.mail.message import EmailMultiAlternatives
+            
+            subscriptions = [ user.email for user in Group.objects.get_by_natural_key('Digest').user_set.all()]
+            if not subscriptions:
+                return
+            
+            body = 'path: {} - EOM'.format(page.get_path()) if previous is None else 'this email should be viewed in HTML.'
+            subject = '[Answers-Digest] Page recently {}: {}'.format('published' if is_publish else 'unpublished', page.get_title())
+            msg = EmailMultiAlternatives(subject, body, settings.SERVER_EMAIL, subscriptions)
+            if is_publish and previous is not None:
+                current = [ [ y.render_plugin() for y in x.get_plugins() ] for x in page.get_public_object().placeholders.all().order_by('slot') ]
+                changed = []
+
+                for prev, curr in zip(previous, current):
+                    differences = list(set(prev).symmetric_difference(curr))
+                    if differences:
+                        changed.append(differences)
+                        
+                changed_template = '<div> <table width="640" border="0" cellpadding="0" cellspacing="0"> <tr> <td> <table width="320" border="0" cellspacing="0" cellpadding="20" align="left"> <tr> <td> <p>Previously:</p> <div>{0}</div> </td> </tr> </table> <table width="320" border="0" cellspacing="0" cellpadding="20" align="right"> <tr> <td> <p>Currently</p> <div>{1}</div> </td> </tr> </table> </td> </tr> </table> </div>'
+                
+                rendered_change = ''
+                for diff in changed:
+                    rendered_change += changed_template.format(self.strip_spaces(diff[0]), self.strip_spaces(diff[1]))
+                
+                html = '<style type="text/css"> @media only screen and (max-device-width: 480px) {{ table[class=contenttable] {{  width:320px !important; }} }} </style> <table width="640" border="0" cellpadding="0" cellspacing="0" class="contenttable"> <div> <h3>Differences:</h3> {} </div>'.format(rendered_change)
+                msg.attach_alternative(html, "text/html")
+            msg.send()
+        return
 
     @transaction.commit_on_success
     def revert_page(self, request, page_id, language):
