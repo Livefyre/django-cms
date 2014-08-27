@@ -1058,9 +1058,21 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
         if page:
             if not page.has_publish_permission(request):
                 return HttpResponseForbidden(force_unicode(_("You do not have permission to publish this page")))
-            published = page.publish(language)
-            if not published:
-                all_published = False
+            try:
+                prepublished_page = None
+                if page.is_published('en'):
+                    prepublished_page = [ [ y.render_plugin() for y in x.get_plugins() ] for x in page.get_public_object().placeholders.all().order_by('slot') ]
+                published = page.publish(language)
+    
+                if not published:
+                    all_published = False
+                else:
+                    self.send_email_notification(page, True, prepublished_page)
+            except:
+                published = page.publish(language)
+    
+                if not published:
+                    all_published = False
         statics = request.GET.get('statics', '')
         if not statics and not page:
             return Http404("No page or stack found for publishing.")
@@ -1170,6 +1182,11 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
                 action_flag=CHANGE,
                 change_message=message,
             )
+            
+            try:
+                self.send_email_notification(page, False)
+            except:
+                pass
         except RuntimeError:
             exc = sys.exc_info()[1]
             messages.error(request, exc.message)
@@ -1180,6 +1197,60 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
         if request.GET.get('redirect_language'):
             path = "%s?language=%s&page_id=%s" % (path, request.GET.get('redirect_language'), request.GET.get('redirect_page_id'))
         return HttpResponseRedirect(path)
+    
+    def strip_spaces(self, line):
+        line = line.replace('\n','')
+        line = line.replace('\t','')
+        line = line.replace('\r','')
+        line = line.replace('&para;', '')
+        return line
+    
+    def send_email_notification(self, page, is_publish, prev_ph=None):
+        if settings.PUBLISH_NOTIFICATIONS:
+            from django.contrib.auth.models import Group
+            from django.core.mail.message import EmailMultiAlternatives
+            from cms.utils.diff_match_patch import diff_match_patch
+            import HTMLParser
+            
+            subscriptions = [ user.email for user in Group.objects.get_by_natural_key('Digest').user_set.all()]
+            if not subscriptions:
+                return
+            
+            body = 'link to page: answers.livefyre.com/{} - EOM'.format(page.get_path()) if prev_ph is None else 'this email should be viewed in HTML.'
+            subject = '[Answers-Digest] Page recently {}: {}'.format('published' if is_publish else 'unpublished', page.get_title())
+            msg = EmailMultiAlternatives(subject, body, settings.SERVER_EMAIL, subscriptions)
+            if is_publish and prev_ph is not None:
+                h = HTMLParser.HTMLParser()
+                curr_ph = [ [ y.render_plugin() for y in x.get_plugins() ] for x in page.get_public_object().placeholders.all().order_by('slot') ]
+
+                changed_template = u'<div> <table width="960" border="0" cellpadding="0" cellspacing="0"> <tr> <td> <table width="480" border="0" cellspacing="0" cellpadding="20" align="left"> <tr> <td> <p><strong>Raw</strong>:</p> <div>{0}</div> </td> </tr> </table> <table width="480" border="0" cellspacing="0" cellpadding="20" align="right"> <tr> <td> <p><strong>Rendered</strong>:</p> <div>{1}</div> </td> </tr> </table> </td> </tr> </table> </div>'
+ 
+                dmp = diff_match_patch()
+                comparison = u''
+                for prev_plugins, curr_plugins in zip(prev_ph, curr_ph): #each placeholder
+                    for prev, curr in zip(prev_plugins, curr_plugins):
+                        diff = dmp.diff_main(prev, curr)
+                    
+                        # check if there are differences
+                        if not diff:
+                            continue
+
+                        changes = False
+                        for d in diff:
+                            if d[0] != 0:
+                                changes = True
+                                break
+                        
+                        if changes:
+                            changed = self.strip_spaces(dmp.diff_prettyHtml(diff))
+                            raw = changed + '<br>'
+                            rendered = h.unescape(changed) + '<br>'
+                            comparison += changed_template.format(raw, rendered) + '<br>'
+                
+                html = u'<style type="text/css"> @media only screen and (max-device-width: 640px) {{ table[class=contenttable] {{  width:480px !important; }} }} </style> <table width="960" border="0" cellpadding="0" cellspacing="0" class="contenttable"> <div> <p><a href="answers.livefyre.com/{0}">answers.livefyre.com/{0}<a></p> <h3>Changes made in this diff: {1}</h3> </div> </table>'.format(page.get_path(), comparison)
+                msg.attach_alternative(html, "text/html")
+            msg.send()
+        return
 
     @wrap_transaction
     def revert_page(self, request, page_id, language):
