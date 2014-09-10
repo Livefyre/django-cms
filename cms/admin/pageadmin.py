@@ -962,7 +962,7 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
                 if not published:
                     all_published = False
                 else:
-                    self.send_email_notification(page, True, prepublished_page)
+                    self.send_email_notification(page, True, request.user, prepublished_page)
             except:
                 published = page.publish(language)
     
@@ -1079,7 +1079,7 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
             )
             
             try:
-                self.send_email_notification(page, False)
+                self.send_email_notification(page, False, request.user)
             except:
                 pass
         except RuntimeError:
@@ -1100,25 +1100,24 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
         line = line.replace('&para;', '')
         return line
     
-    def send_email_notification(self, page, is_publish, prev_ph=None):
+    def send_email_notification(self, page, is_publish, user, prev_ph=None):
         if settings.PUBLISH_NOTIFICATIONS:
             from django.contrib.auth.models import Group
             from django.core.mail.message import EmailMultiAlternatives
             from cms.utils.diff_match_patch import diff_match_patch
             import HTMLParser
-            
+
             subscriptions = [ user.email for user in Group.objects.get_by_natural_key('Digest').user_set.all()]
             if not subscriptions:
                 return
-            
-            body = 'link to page: answers.livefyre.com/{} - EOM'.format(page.get_path()) if prev_ph is None else 'this email should be viewed in HTML.'
+            body = 'Page: answers.livefyre.com/{} \nChanges made by {} : {}'.format(page.get_path(), user.get_full_name(), user.email) if prev_ph is None else 'this email should be viewed in HTML.'
             subject = '[Answers-Digest] Page recently {}: {}'.format('published' if is_publish else 'unpublished', page.get_title())
             msg = EmailMultiAlternatives(subject, body, settings.SERVER_EMAIL, subscriptions)
             if is_publish and prev_ph is not None:
                 h = HTMLParser.HTMLParser()
                 curr_ph = [ [ y.render_plugin() for y in x.get_plugins() ] for x in page.get_public_object().placeholders.all().order_by('slot') ]
 
-                changed_template = u'<div> <table width="960" border="0" cellpadding="0" cellspacing="0"> <tr> <td> <table width="480" border="0" cellspacing="0" cellpadding="20" align="left"> <tr> <td> <p><strong>Raw</strong>:</p> <div>{0}</div> </td> </tr> </table> <table width="480" border="0" cellspacing="0" cellpadding="20" align="right"> <tr> <td> <p><strong>Rendered</strong>:</p> <div>{1}</div> </td> </tr> </table> </td> </tr> </table> </div>'
+                changed_template = u'<div> <table width="960" border="0" cellpadding="0" cellspacing="0"> <tr> <td> <p><strong>[Raw]</strong></p> <div>{0}</div> </td> </tr><hr/> <tr> <td> <p><strong>[Rendered]</strong></p> <div>{1}</div> </td> </tr> </td> </tr> </table> </div>'
  
                 dmp = diff_match_patch()
                 comparison = u''
@@ -1127,22 +1126,15 @@ class PageAdmin(PlaceholderAdminMixin, ModelAdmin):
                         diff = dmp.diff_main(prev, curr)
                     
                         # check if there are differences
-                        if not diff:
+                        if not diff or len(diff) <= 1:
                             continue
 
-                        changes = False
-                        for d in diff:
-                            if d[0] != 0:
-                                changes = True
-                                break
-                        
-                        if changes:
-                            changed = self.strip_spaces(dmp.diff_prettyHtml(diff))
-                            raw = changed + '<br>'
-                            rendered = h.unescape(changed) + '<br>'
-                            comparison += changed_template.format(raw, rendered) + '<br>'
-                
-                html = u'<style type="text/css"> @media only screen and (max-device-width: 640px) {{ table[class=contenttable] {{  width:480px !important; }} }} </style> <table width="960" border="0" cellpadding="0" cellspacing="0" class="contenttable"> <div> <p><a href="answers.livefyre.com/{0}">answers.livefyre.com/{0}<a></p> <h3>Changes made in this diff: {1}</h3> </div> </table>'.format(page.get_path(), comparison)
+                        changed = self.strip_spaces(dmp.diff_prettyHtml(diff))
+                        raw = changed + '<br>'
+                        rendered = h.unescape(changed) + '<br>'
+                        comparison += changed_template.format(raw, rendered) + '<br>'
+            
+                html = u'<style type="text/css"> @media only screen and (max-device-width: 640px) {{ table[class=contenttable] {{  width:480px !important; }} }} </style> <table width="960" border="0" cellpadding="0" cellspacing="0" class="contenttable"> <div> <p><a href="answers.livefyre.com/{0}">answers.livefyre.com/{0}<a></p> <p>Changes made by: <strong>{2} : {3}</strong></p> <p>Changes made in this diff: {1}</p> </div> </table>'.format(page.get_path(), comparison, user.get_full_name(), user.email)
                 msg.attach_alternative(html, "text/html")
             msg.send()
         return
